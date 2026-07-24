@@ -1,16 +1,32 @@
 {
   "name": "@osnova/plugin-sdk",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "license": "MIT",
   "packageManager": "pnpm@10.5.2",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./testkit": {
+      "types": "./dist/testkit.d.ts",
+      "import": "./dist/testkit.js"
+    },
+    "./package": {
+      "types": "./dist/package.d.ts",
+      "import": "./dist/package.js"
+    }
   },
-  "types": "./src/index.ts",
+  "types": "./dist/index.d.ts",
+  "files": ["dist", "templates", "README.md", "LICENSE"],
+  "bin": {
+    "osnova-extension": "./dist/cli.js"
+  },
   "scripts": {
-    "build": "tsc --noEmit -p tsconfig.json",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "npm run build && node dist/selftest.js"
   },
   "devDependencies": {
     "@types/node": "^22.10.7",

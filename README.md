@@ -1,10 +1,11 @@
 # osnova-plugin-sdk
 
-Минимальный TypeScript SDK для плагинов Osnova.
+Extension SDK и Developer Kit для Osnova Reborn.
 
 ## Статус
 
-Стартовая основа SDK.
+Extension Manifest v1, operation handlers, artifact candidates, context
+providers, package validation и headless CLI.
 
 ## Лицензия
 
@@ -21,10 +22,14 @@ pnpm typecheck
 ## Поверхность SDK
 
 - `definePlugin`
-- `PluginManifest`
-- объявления permissions
-- черновик регистрации команд
-- черновик host context
+- `defineExtension`
+- `defineTool` / `defineOperation`
+- `defineArtifactType` / `defineContextProvider`
+- `defineConnector` / `defineModelProvider`
+- manifest lint, testkit и portable package format
+
+`definePlugin` сохранен как compatibility API для экспериментального формата
+0.1. Новые расширения используют `defineExtension`.
 
 ## Шаблон
 

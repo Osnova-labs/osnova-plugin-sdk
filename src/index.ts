@@ -1,4 +1,489 @@
-export type Permission =
+export type ExtensionPermission =
+  | "project:read"
+  | "artifact:read"
+  | "artifact:create"
+  | "network:use"
+  | "models:use"
+  | "models:install"
+  | "compute:gpu"
+  | "native:execute"
+  | "external:apps"
+  | "secrets:read"
+  | "background:run";
+
+export type OperationRisk =
+  | "safe-read"
+  | "project-write"
+  | "network-egress"
+  | "external-side-effect"
+  | "privileged";
+
+export type RuntimeKind = "builtin" | "node-process" | "native-process" | "oci" | "remote";
+export type RuntimeLifecycle = "job" | "project" | "shared";
+export type ContextMode = "none" | "automatic" | "declarative" | "custom";
+export type ContextLevel = "compact" | "expanded";
+
+export interface RuntimeContribution {
+  id: string;
+  kind: RuntimeKind;
+  lifecycle: RuntimeLifecycle;
+  entry?: string;
+  image?: string;
+  endpoint?: string;
+  protocol?: "osnova-tool-v1" | "mcp";
+  idleTimeoutSeconds?: number;
+  resources?: ResourceRequirements;
+  models?: ModelDependency[];
+}
+
+export interface ResourceRequirements {
+  cpu?: number;
+  memoryMb?: number;
+  diskMb?: number;
+  gpu?: boolean;
+  network?: boolean;
+}
+
+export interface ModelDependency {
+  id: string;
+  version: string;
+  source: string;
+  sha256: string;
+  size: number;
+  license: string;
+  platforms?: Array<"win32" | "darwin">;
+  architectures?: Array<"x64" | "arm64">;
+}
+
+export interface ThemeContribution {
+  id: string;
+  title: string;
+  tokens: string;
+  icons?: string;
+}
+
+export interface ToolContribution {
+  id: string;
+  title: string;
+  description?: string;
+  runtimeId?: string;
+  icon?: string;
+}
+
+export interface OperationDefinition {
+  id: string;
+  toolId: string;
+  version: string;
+  title: string;
+  description?: string;
+  inputSchema: JsonSchema;
+  outputSchema: JsonSchema;
+  accepts?: string[];
+  produces?: string[];
+  risk: OperationRisk;
+  agentVisibility: "hidden" | "explicit" | "automatic";
+  execution: "immediate" | "job";
+  timeoutSeconds?: number;
+  cancellable?: boolean;
+  idempotent?: boolean;
+  permissions: ExtensionPermission[];
+  resources?: ResourceRequirements;
+}
+
+export interface ArtifactTypeContribution {
+  id: string;
+  title: string;
+  mediaTypes?: string[];
+  context:
+    | { mode: "none" | "automatic" }
+    | { mode: "declarative"; fields: string[] }
+    | { mode: "custom"; providerId: string };
+}
+
+export interface ContextProviderContribution {
+  id: string;
+  artifactTypes: string[];
+  version: string;
+  runtimeId: string;
+  resourceUriTemplate?: string;
+}
+
+export interface ConnectorContribution {
+  id: string;
+  title: string;
+  runtimeId: string;
+  scope: "project" | "external-explicit";
+  produces: string[];
+  permissions: ExtensionPermission[];
+}
+
+export interface ModelProviderContribution {
+  id: string;
+  title: string;
+  runtimeId: string;
+  recipient: "local" | "cloud";
+  capabilities: Array<"chat" | "vision" | "embeddings" | "structured-output">;
+}
+
+export interface ViewContribution {
+  id: string;
+  title: string;
+  toolId: string;
+  entry: string;
+}
+
+export interface ExtensionContributions {
+  themes?: ThemeContribution[];
+  tools?: ToolContribution[];
+  operations?: OperationDefinition[];
+  artifactTypes?: ArtifactTypeContribution[];
+  contextProviders?: ContextProviderContribution[];
+  connectors?: ConnectorContribution[];
+  modelProviders?: ModelProviderContribution[];
+  views?: ViewContribution[];
+}
+
+export interface ExtensionManifest {
+  manifestVersion: "1";
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  publisher?: string;
+  license?: string;
+  osnova: { minVersion: string };
+  permissions: ExtensionPermission[];
+  runtimes?: RuntimeContribution[];
+  contributes: ExtensionContributions;
+}
+
+export interface ArtifactInput {
+  artifactId: string;
+  type: string;
+  title?: string;
+  payloads: Array<{ path: string; mediaType: string; role?: string }>;
+}
+
+export interface ArtifactCandidate {
+  id?: string;
+  type: string;
+  title?: string;
+  payloads: Array<{ path: string; mediaType?: string; role?: string }>;
+  context?: { mode: ContextMode; providerId?: string; fields?: string[]; template?: string };
+  tags?: string[];
+  metadata?: Record<string, unknown>;
+}
+
+export interface OperationResult {
+  structured?: Record<string, unknown>;
+  artifacts?: ArtifactCandidate[];
+  message?: string;
+}
+
+export interface OperationContext {
+  jobId: string;
+  projectId: string;
+  sessionId?: string;
+  input: Record<string, unknown>;
+  artifacts: ArtifactInput[];
+  outboxPath: string;
+  signal: AbortSignal;
+  reportProgress(progress: number, message?: string): void;
+}
+
+export type OperationHandler = (context: OperationContext) => Promise<OperationResult> | OperationResult;
+
+export interface ContextEnvelope {
+  level: ContextLevel;
+  text?: string;
+  structured?: Record<string, unknown>;
+  sources: Array<{ artifactId: string; payloadPath?: string }>;
+  sensitivity: "public" | "project" | "sensitive";
+  allowedRecipients: Array<"local" | "cloud">;
+  tokenEstimate: number;
+  truncated: boolean;
+  freshness?: string;
+  providerVersion: string;
+}
+
+export interface ContextProviderInput {
+  level: ContextLevel;
+  artifact: ArtifactInput;
+  budgetTokens: number;
+  recipient: "local" | "cloud";
+}
+
+export type ContextProviderHandler = (input: ContextProviderInput) => Promise<ContextEnvelope> | ContextEnvelope;
+
+export interface OsnovaExtension {
+  manifest: ExtensionManifest;
+  operations?: Record<string, OperationHandler>;
+  contextProviders?: Record<string, ContextProviderHandler>;
+}
+
+export function defineExtension(extension: OsnovaExtension): OsnovaExtension {
+  const validation = validateExtensionManifest(extension.manifest);
+  if (!validation.valid) {
+    throw new Error(validation.issues.join("\n"));
+  }
+
+  const declaredOperations = new Set(extension.manifest.contributes.operations?.map((operation) => operation.id) ?? []);
+  for (const operationId of Object.keys(extension.operations ?? {})) {
+    if (!declaredOperations.has(operationId)) {
+      throw new Error(`Operation handler is not declared in manifest: ${operationId}`);
+    }
+  }
+  return extension;
+}
+
+export function defineTool<T extends ToolContribution>(tool: T): T {
+  return tool;
+}
+
+export function defineOperation<T extends OperationDefinition>(operation: T): T {
+  return operation;
+}
+
+export function defineArtifactType<T extends ArtifactTypeContribution>(artifactType: T): T {
+  return artifactType;
+}
+
+export function defineContextProvider<T extends ContextProviderContribution>(provider: T): T {
+  return provider;
+}
+
+export function defineConnector<T extends ConnectorContribution>(connector: T): T {
+  return connector;
+}
+
+export function defineModelProvider<T extends ModelProviderContribution>(provider: T): T {
+  return provider;
+}
+
+export interface ManifestValidationResult {
+  valid: boolean;
+  issues: string[];
+}
+
+const knownPermissions = new Set<ExtensionPermission>([
+  "project:read",
+  "artifact:read",
+  "artifact:create",
+  "network:use",
+  "models:use",
+  "models:install",
+  "compute:gpu",
+  "native:execute",
+  "external:apps",
+  "secrets:read",
+  "background:run"
+]);
+
+export function validateExtensionManifest(manifest: ExtensionManifest): ManifestValidationResult {
+  const issues: string[] = [];
+  if (manifest.manifestVersion !== "1") issues.push("manifestVersion must be 1.");
+  if (!isNamespacedId(manifest.id)) issues.push("Extension id must be namespaced.");
+  if (!manifest.name.trim()) issues.push("Extension name is required.");
+  if (!isSemver(manifest.version)) issues.push("Extension version must be semver.");
+  if (!manifest.osnova?.minVersion || !isSemver(manifest.osnova.minVersion)) issues.push("osnova.minVersion must be semver.");
+  for (const permission of manifest.permissions) {
+    if (!knownPermissions.has(permission)) issues.push(`Unknown permission: ${permission}`);
+  }
+
+  const runtimeIds = new Set<string>();
+  const runtimesById = new Map<string, RuntimeContribution>();
+  for (const runtime of manifest.runtimes ?? []) {
+    validateContributionId(runtime.id, manifest.id, "Runtime", issues);
+    if (runtimeIds.has(runtime.id)) issues.push(`Duplicate runtime id: ${runtime.id}`);
+    runtimeIds.add(runtime.id);
+    runtimesById.set(runtime.id, runtime);
+    if ((runtime.kind === "node-process" || runtime.kind === "native-process") && !runtime.entry) {
+      issues.push(`Runtime ${runtime.id} requires entry.`);
+    }
+    if (runtime.entry && !isSafePackagePath(runtime.entry)) issues.push(`Runtime ${runtime.id} entry must be a safe package-relative path.`);
+    if (runtime.kind === "oci" && !runtime.image) issues.push(`OCI runtime ${runtime.id} requires image.`);
+    if (runtime.kind === "oci" && runtime.image && !/@sha256:[a-f0-9]{64}$/.test(runtime.image)) issues.push(`OCI runtime ${runtime.id} image must be pinned by a full SHA-256 digest.`);
+    if (runtime.kind === "oci" && runtime.lifecycle !== "job") issues.push(`OCI runtime ${runtime.id} must use job lifecycle to preserve per-invocation mounts.`);
+    if (runtime.kind === "remote" && !runtime.endpoint) issues.push(`Remote runtime ${runtime.id} requires endpoint.`);
+    if (runtime.kind === "remote" && runtime.endpoint && !isSafeRemoteEndpoint(runtime.endpoint)) issues.push(`Remote runtime ${runtime.id} requires HTTPS unless it uses loopback.`);
+    if (runtime.kind === "native-process" && !manifest.permissions.includes("native:execute")) issues.push(`Native runtime ${runtime.id} requires native:execute permission.`);
+    if (runtime.lifecycle !== "job" && !manifest.permissions.includes("background:run")) issues.push(`Persistent runtime ${runtime.id} requires background:run permission.`);
+    if ((runtime.kind === "remote" || runtime.resources?.network) && !manifest.permissions.includes("network:use")) issues.push(`Runtime ${runtime.id} requires network:use permission.`);
+    if (runtime.resources?.gpu && !manifest.permissions.includes("compute:gpu")) issues.push(`Runtime ${runtime.id} requires compute:gpu permission.`);
+    if (runtime.models?.length && !manifest.permissions.includes("models:use")) issues.push(`Runtime ${runtime.id} declares models but models:use is missing.`);
+    for (const [name, value] of Object.entries(runtime.resources ?? {})) {
+      if (name === "network" || name === "gpu") continue;
+      if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) issues.push(`Runtime ${runtime.id} resource ${name} must be positive.`);
+    }
+    if (runtime.idleTimeoutSeconds !== undefined && (!Number.isFinite(runtime.idleTimeoutSeconds) || runtime.idleTimeoutSeconds <= 0)) issues.push(`Runtime ${runtime.id} idleTimeoutSeconds must be positive.`);
+    for (const model of runtime.models ?? []) {
+      if (!isNamespacedId(model.id)) issues.push(`Runtime ${runtime.id} has an invalid model id: ${model.id}.`);
+      if (!/^[a-f0-9]{64}$/.test(model.sha256)) issues.push(`Runtime ${runtime.id} model ${model.id} requires a lowercase SHA-256 digest.`);
+      if (!Number.isSafeInteger(model.size) || model.size <= 0) issues.push(`Runtime ${runtime.id} model ${model.id} requires a positive size.`);
+      if (!model.version || !model.source || !model.license) issues.push(`Runtime ${runtime.id} model ${model.id} requires version, source, and license.`);
+    }
+  }
+
+  const toolIds = new Set<string>();
+  const toolRuntimeIds = new Map<string, string | undefined>();
+  for (const tool of manifest.contributes.tools ?? []) {
+    validateContributionId(tool.id, manifest.id, "Tool", issues);
+    if (toolIds.has(tool.id)) issues.push(`Duplicate tool id: ${tool.id}`);
+    toolIds.add(tool.id);
+    toolRuntimeIds.set(tool.id, tool.runtimeId);
+    if (tool.runtimeId && !runtimeIds.has(tool.runtimeId)) issues.push(`Tool ${tool.id} references unknown runtime ${tool.runtimeId}.`);
+  }
+
+  const operationIds = new Set<string>();
+  for (const operation of manifest.contributes.operations ?? []) {
+    validateContributionId(operation.id, manifest.id, "Operation", issues);
+    if (operationIds.has(operation.id)) issues.push(`Duplicate operation id: ${operation.id}`);
+    operationIds.add(operation.id);
+    if (!toolIds.has(operation.toolId)) issues.push(`Operation ${operation.id} references unknown tool ${operation.toolId}.`);
+    validateOperationSchema(operation.inputSchema, `${operation.id} inputSchema`, issues);
+    validateOperationSchema(operation.outputSchema, `${operation.id} outputSchema`, issues);
+    for (const permission of operation.permissions) {
+      if (!manifest.permissions.includes(permission)) {
+        issues.push(`Operation ${operation.id} uses undeclared permission ${permission}.`);
+      }
+    }
+    if (operation.execution === "job" && !operation.timeoutSeconds) {
+      issues.push(`Job operation ${operation.id} requires timeoutSeconds.`);
+    }
+    if (operation.timeoutSeconds !== undefined && (!Number.isFinite(operation.timeoutSeconds) || operation.timeoutSeconds <= 0)) issues.push(`Operation ${operation.id} timeoutSeconds must be positive.`);
+    if (operation.accepts?.length && !operation.permissions.includes("artifact:read")) issues.push(`Operation ${operation.id} accepts artifacts and requires artifact:read permission.`);
+    const operationRuntime = runtimesById.get(toolRuntimeIds.get(operation.toolId) ?? "");
+    for (const permission of requiredRuntimePermissions(operationRuntime)) {
+      if (!operation.permissions.includes(permission)) issues.push(`Operation ${operation.id} requires ${permission} permission because of its runtime.`);
+    }
+    if ((operation.resources?.network || operation.risk === "network-egress") && !operation.permissions.includes("network:use")) issues.push(`Operation ${operation.id} requires network:use permission.`);
+    if (operation.resources?.gpu && !operation.permissions.includes("compute:gpu")) issues.push(`Operation ${operation.id} requires compute:gpu permission.`);
+  }
+
+  const providerIds = new Set<string>();
+  for (const provider of manifest.contributes.contextProviders ?? []) {
+    validateContributionId(provider.id, manifest.id, "Context provider", issues);
+    if (!runtimeIds.has(provider.runtimeId)) issues.push(`Context provider ${provider.id} references unknown runtime ${provider.runtimeId}.`);
+    if (!manifest.permissions.includes("artifact:read")) issues.push(`Context provider ${provider.id} requires artifact:read permission.`);
+    if (runtimesById.get(provider.runtimeId)?.protocol === "mcp" && !provider.resourceUriTemplate) issues.push(`MCP context provider ${provider.id} requires resourceUriTemplate.`);
+    providerIds.add(provider.id);
+  }
+  const artifactTypeIds = new Set(manifest.contributes.artifactTypes?.map((artifactType) => artifactType.id) ?? []);
+  for (const artifactType of manifest.contributes.artifactTypes ?? []) {
+    validateContributionId(artifactType.id, manifest.id, "Artifact type", issues);
+    if (artifactType.context.mode === "custom" && !providerIds.has(artifactType.context.providerId)) {
+      issues.push(`Artifact type ${artifactType.id} references unknown context provider ${artifactType.context.providerId}.`);
+    }
+  }
+  for (const operation of manifest.contributes.operations ?? []) {
+    for (const produced of operation.produces ?? []) {
+      if (produced.startsWith(`${manifest.id}.`) && !artifactTypeIds.has(produced)) issues.push(`Operation ${operation.id} produces undeclared artifact type ${produced}.`);
+    }
+  }
+  for (const theme of manifest.contributes.themes ?? []) {
+    validateContributionId(theme.id, manifest.id, "Theme", issues);
+    if (!isSafePackagePath(theme.tokens) || (theme.icons && !isSafePackagePath(theme.icons))) issues.push(`Theme ${theme.id} uses an unsafe resource path.`);
+  }
+  for (const connector of manifest.contributes.connectors ?? []) {
+    validateContributionId(connector.id, manifest.id, "Connector", issues);
+    if (!runtimeIds.has(connector.runtimeId)) issues.push(`Connector ${connector.id} references unknown runtime ${connector.runtimeId}.`);
+    for (const permission of connector.permissions) if (!manifest.permissions.includes(permission)) issues.push(`Connector ${connector.id} uses undeclared permission ${permission}.`);
+    for (const permission of ["artifact:create" as const, ...requiredRuntimePermissions(runtimesById.get(connector.runtimeId))]) {
+      if (!connector.permissions.includes(permission)) issues.push(`Connector ${connector.id} requires ${permission} permission.`);
+    }
+    for (const produced of connector.produces) if (produced.startsWith(`${manifest.id}.`) && !artifactTypeIds.has(produced)) issues.push(`Connector ${connector.id} produces undeclared artifact type ${produced}.`);
+  }
+  for (const provider of manifest.contributes.modelProviders ?? []) {
+    validateContributionId(provider.id, manifest.id, "Model provider", issues);
+    if (!runtimeIds.has(provider.runtimeId)) issues.push(`Model provider ${provider.id} references unknown runtime ${provider.runtimeId}.`);
+    const runtime = runtimesById.get(provider.runtimeId);
+    if (runtime?.kind === "remote" && runtime.endpoint && isExternalEndpoint(runtime.endpoint) && provider.recipient !== "cloud") {
+      issues.push(`Model provider ${provider.id} must declare cloud recipient for an external remote runtime.`);
+    }
+  }
+  for (const view of manifest.contributes.views ?? []) {
+    validateContributionId(view.id, manifest.id, "View", issues);
+    if (!toolIds.has(view.toolId)) issues.push(`View ${view.id} references unknown tool ${view.toolId}.`);
+    if (!isSafePackagePath(view.entry)) issues.push(`View ${view.id} entry must be a safe package-relative path.`);
+  }
+
+  return { valid: issues.length === 0, issues };
+}
+
+export type JsonSchema = Record<string, unknown>;
+
+function validateContributionId(id: string, extensionId: string, label: string, issues: string[]): void {
+  if (!isNamespacedId(id) || !id.startsWith(`${extensionId}.`)) {
+    issues.push(`${label} id must use extension prefix ${extensionId}.`);
+  }
+}
+
+function requiredRuntimePermissions(runtime?: RuntimeContribution): ExtensionPermission[] {
+  if (!runtime) return [];
+  return [...new Set<ExtensionPermission>([
+    ...(runtime.kind === "remote" || runtime.resources?.network ? ["network:use" as const] : []),
+    ...(runtime.kind === "native-process" ? ["native:execute" as const] : []),
+    ...(runtime.lifecycle !== "job" ? ["background:run" as const] : []),
+    ...(runtime.resources?.gpu ? ["compute:gpu" as const] : []),
+    ...(runtime.models?.length ? ["models:use" as const] : [])
+  ])];
+}
+
+function isExternalEndpoint(endpoint: string): boolean {
+  try { return !["127.0.0.1", "localhost", "::1"].includes(new URL(endpoint).hostname); }
+  catch { return true; }
+}
+
+function isSafeRemoteEndpoint(endpoint: string): boolean {
+  try {
+    const url = new URL(endpoint);
+    return url.protocol === "https:" || (url.protocol === "http:" && ["127.0.0.1", "localhost", "::1"].includes(url.hostname));
+  } catch { return false; }
+}
+
+function validateOperationSchema(schema: JsonSchema, label: string, issues: string[], depth = 0, seen = new Set<object>()): void {
+  if (depth > 100) { issues.push(`${label} exceeds maximum schema depth.`); return; }
+  if (seen.has(schema)) { issues.push(`${label} contains an in-memory cycle.`); return; }
+  seen.add(schema);
+  if (typeof schema.$ref === "string" && schema.$ref !== "#" && !schema.$ref.startsWith("#/")) issues.push(`${label} may use only local $ref values.`);
+  if (typeof schema.pattern === "string" && !isSafeSchemaPattern(schema.pattern)) issues.push(`${label} contains an unsafe or invalid regex pattern.`);
+  for (const [key, value] of Object.entries(schema)) {
+    if (key === "default" || key === "examples" || key === "const" || key === "enum") continue;
+    if (Array.isArray(value)) {
+      for (const child of value) if (isRecord(child)) validateOperationSchema(child, label, issues, depth + 1, seen);
+    } else if (isRecord(value)) {
+      if (["properties", "patternProperties", "$defs", "definitions", "dependentSchemas"].includes(key)) {
+        for (const child of Object.values(value)) if (isRecord(child)) validateOperationSchema(child, label, issues, depth + 1, seen);
+      } else validateOperationSchema(value, label, issues, depth + 1, seen);
+    }
+  }
+  seen.delete(schema);
+}
+
+function isSafeSchemaPattern(pattern: string): boolean {
+  if (pattern.length > 512 || /\\[1-9]|\(\?[=!<]/.test(pattern) || /\([^)]*[+*][^)]*\)[+*{]/.test(pattern)) return false;
+  try { new RegExp(pattern, "u"); return true; } catch { return false; }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isNamespacedId(value: string): boolean {
+  return /^[a-z0-9][a-z0-9._-]+$/.test(value) && value.includes(".");
+}
+
+function isSemver(value: string): boolean {
+  return /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(value);
+}
+
+function isSafePackagePath(value: string): boolean {
+  const normalized = value.replaceAll("\\", "/");
+  return Boolean(normalized) && !normalized.startsWith("/") && !normalized.split("/").includes("..");
+}
+
+// Compatibility layer for the experimental 0.1 command API.
+export type LegacyPermission =
   | "project:read"
   | "project:write"
   | "notes:read"
@@ -14,10 +499,8 @@ export interface PluginManifest {
   version: string;
   description?: string;
   entry: string;
-  permissions: Permission[];
-  osnova: {
-    minVersion: string;
-  };
+  permissions: LegacyPermission[];
+  osnova: { minVersion: string };
 }
 
 export interface CommandDefinition {
@@ -28,32 +511,15 @@ export interface CommandDefinition {
 }
 
 export type CommandHandler = (context: CommandContext) => Promise<void> | void;
-
 export interface CommandContext {
-  project?: {
-    rootPath: string;
-    manifest: unknown;
-  };
-  ui: {
-    notify(message: string): void;
-  };
+  project?: { rootPath: string; manifest: unknown };
+  ui: { notify(message: string): void };
 }
-
-export interface CommandsApi {
-  register(command: CommandDefinition): void;
-}
-
-export interface PluginContext {
-  manifest: PluginManifest;
-  commands: CommandsApi;
-}
-
+export interface CommandsApi { register(command: CommandDefinition): void }
+export interface PluginContext { manifest: PluginManifest; commands: CommandsApi }
 export interface OsnovaPlugin {
   manifest: PluginManifest;
   activate(context: PluginContext): Promise<void> | void;
   deactivate?(): Promise<void> | void;
 }
-
-export function definePlugin(plugin: OsnovaPlugin): OsnovaPlugin {
-  return plugin;
-}
+export function definePlugin(plugin: OsnovaPlugin): OsnovaPlugin { return plugin; }
